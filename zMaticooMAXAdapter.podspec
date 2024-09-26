@@ -25,6 +25,7 @@ Pod::Spec.new do |spec|
   #   * Write the description between the DESC delimiters below.
   #   * Finally, don't worry about the indent, CocoaPods strips it!
   spec.description  = <<-DESC
+  zMaticoo iOS SDK Max Adaper
                    DESC
 
   spec.homepage     = "https://www.zmaticoo.com"
@@ -38,8 +39,8 @@ Pod::Spec.new do |spec|
   #  Popular ones are 'MIT', 'BSD' and 'Apache License, Version 2.0'.
   #
 
-  spec.license      = "MIT (example)"
-  # spec.license      = { :type => "MIT", :file => "FILE_LICENSE" }
+  #spec.license      = "MIT (example)"
+   spec.license      = { :type => "MIT", :file => "FILE_LICENSE" }
 
 
   # ――― Author Metadata  ――――――――――――――――――――――――――――――――――――――――――――――――――――――――― #
@@ -80,7 +81,7 @@ Pod::Spec.new do |spec|
   #  Supports git, hg, bzr, svn and HTTP.
   #
 
-  spec.source       = { :git => "http://EXAMPLE/zMaticooMAXAdapter.git", :tag => "#{spec.version}" }
+  spec.source       = { :git => "https://github.com/Maticoo/zMaticooiOSMaxAdapter", :tag => "#{spec.version}" }
 
 
   # ――― Source Code ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――― #
