@@ -8,7 +8,7 @@
 
 #import "MaticooMediationAdapter.h"
 #import "MaticooMediationTrackManager.h"
-#define ADAPTER_VERSION @"1.1.3"
+#define ADAPTER_VERSION @"1.1.4"
 
 
 
@@ -129,6 +129,24 @@
 #pragma clang diagnostic pop
 }
 
+- (NSDictionary *)ensureParams:(NSDictionary *)dict{
+    NSMutableDictionary * newDict = [NSMutableDictionary dictionary];
+    
+    @try {
+        [dict enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
+            if ([obj isKindOfClass:[NSString class]]) {
+                [newDict setValue:obj forKey:key];
+            }
+        }];
+    }@catch (NSException *exception) {
+        
+    } @finally {
+        
+    }
+    
+    return newDict;
+}
+
 
 #pragma mark - MAInterstitialAdapter Methods
 
@@ -148,6 +166,9 @@
     
     self.interstitial = [[MATInterstitialAd alloc] initWithPlacementID:placementIdentifier];
     self.interstitialAdapterDelegate = [[ALMaticooMediationAdapterInterstitialAdDelegate alloc] initWithParentAdapter: self andNotify: delegate];
+    if(parameters.localExtraParameters){
+        self.interstitial.localExtra = [self ensureParams:parameters.localExtraParameters];
+    }
     self.interstitial.delegate = self.interstitialAdapterDelegate;
     [self.interstitial loadAd];    
 }
@@ -193,6 +214,9 @@
     }
     else
     {
+        if(parameters.localExtraParameters){
+            self.rewardedVideoAd.localExtra = [self ensureParams:parameters.localExtraParameters];
+        }
         [self log: @"Loading bidding rewarded ad..."];
         [self.rewardedVideoAd loadAd];
     }
@@ -257,6 +281,9 @@
         self.nativeAdViewAdAdapterDelegate = [[ALMaticooMediationAdapterNativeAdViewAdDelegate alloc] initWithParentAdapter: self andNotify: delegate];
         self.nativeAd.delegate = self.nativeAdViewAdAdapterDelegate;
         [self log: @"Loading bidding native %@ ad...", adFormat.label];
+        if(parameters.localExtraParameters){
+            self.nativeAd.localExtra = [self ensureParams:parameters.localExtraParameters];
+        }
         [self.nativeAd loadAd];
     }
     else
@@ -267,6 +294,9 @@
         self.bannerAdView.frame = CGRectMake(0, 0, adSize.width, adSize.height);
         self.adViewAdapterDelegate = [[ALMaticooMediationAdapterAdViewDelegate alloc] initWithParentAdapter: self andNotify: delegate];
         self.bannerAdView.delegate = self.adViewAdapterDelegate;
+        if(parameters.localExtraParameters){
+            self.bannerAdView.localExtra = [self ensureParams:parameters.localExtraParameters];
+        }
         [self.bannerAdView loadAd];
     }
 }
@@ -291,6 +321,10 @@
         self.nativeAd = [[MATNativeAd alloc] initWithPlacementID: placementIdentifier];
         self.nativeAdAdapterDelegate = [[ALMaticooMediationAdapterNativeAdDelegate alloc] initWithParentAdapter: self andNotify: delegate];
         self.nativeAd.delegate = self.nativeAdAdapterDelegate;
+        
+        if(parameters.localExtraParameters){
+            self.nativeAd.localExtra = [self ensureParams:parameters.localExtraParameters];
+        }
         [self.nativeAd loadAd];
     });
 }
