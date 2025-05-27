@@ -16,7 +16,7 @@ Pod::Spec.new do |spec|
   #
 
   spec.name         = "zMaticooMAXAdapter"
-  spec.version      = "1.1.5"
+  spec.version      = "1.1.6"
   spec.summary      = "zMaticoo iOS SDK MAX Adapter."
 
   # This description is used to generate tags and improve search results.

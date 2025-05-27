@@ -8,7 +8,7 @@
 
 #import "MaticooMediationAdapter.h"
 #import "MaticooMediationTrackManager.h"
-#define ADAPTER_VERSION @"1.1.5"
+#define ADAPTER_VERSION @"1.1.6"
 
 
 
@@ -97,21 +97,36 @@
     return ADAPTER_VERSION;
 }
 
-+ (MAAdapterError *)toMaxError:(NSError *)maticooError
++ (MAAdapterError *)toMaxLoadError:(NSError *)maticooError{
+    return [MaticooMediationAdapter toMaxError:maticooError isLoad:YES];
+}
+
++ (MAAdapterError *)toMaxShowError:(NSError *)maticooError{
+    return [MaticooMediationAdapter toMaxError:maticooError isLoad:NO];
+}
+
++ (MAAdapterError *)toMaxError:(NSError *)maticooError isLoad:(BOOL)isLoad
 {
     NSInteger maticooErrorCode = maticooError.code;
     MAAdapterError *adapterError = MAAdapterError.unspecified;
+    if(isLoad){
+        adapterError = MAAdapterError.noFill;
+    }else{
+        adapterError = MAAdapterError.adDisplayFailedError;
+    }
+    
     switch ( maticooErrorCode )
     {
         case 1000: // Network Error
             adapterError = MAAdapterError.noConnection;
             break;
         case 1001: // No Fill
+        case 106:
             adapterError = MAAdapterError.noFill;
             break;
-        case 106:
-            adapterError = MAAdapterError.invalidLoadState;
-            break;
+//        case 106:
+//            adapterError = MAAdapterError.invalidLoadState;
+//            break;
         case 104:
             adapterError = MAAdapterError.invalidConfiguration;
             break;
@@ -156,7 +171,7 @@
     if(!MAT_NSSTRING_NOT_NULL(placementIdentifier)) {
         NSError *error = [[NSError alloc]initWithDomain:@"The placementIdentifier of the interstitial ad is empty." code:106 userInfo:nil];
         [MaticooMediationTrackManager trackMediationAdRequestFailed:placementIdentifier adType:INTERSTITIAL msg:error.description];
-        MAAdapterError *adapterError = [MaticooMediationAdapter toMaxError: error];
+        MAAdapterError *adapterError = [MaticooMediationAdapter toMaxLoadError: error];
         [delegate didFailToLoadInterstitialAdWithError: adapterError];
         return;
     }
@@ -206,7 +221,7 @@
     if(!MAT_NSSTRING_NOT_NULL(placementIdentifier)) {
         NSError *error = [[NSError alloc]initWithDomain:@"The placementIdentifier of the RewardedVideo ad is empty." code:106 userInfo:nil];
         [MaticooMediationTrackManager trackMediationAdRequestFailed:placementIdentifier adType:REWARDEDVIDEO msg:error.description];
-        MAAdapterError *adapterError = [MaticooMediationAdapter toMaxError: error];
+        MAAdapterError *adapterError = [MaticooMediationAdapter toMaxLoadError: error];
         [delegate didFailToLoadRewardedAdWithError: adapterError];
         return;
     }
@@ -277,7 +292,7 @@
     if(!MAT_NSSTRING_NOT_NULL(placementIdentifier)) {
         NSError *error = [[NSError alloc]initWithDomain:domain code:106 userInfo:nil];
         [MaticooMediationTrackManager trackMediationAdRequestFailed:placementIdentifier adType:adType msg:error.description];
-        MAAdapterError *adapterError = [MaticooMediationAdapter toMaxError: error];
+        MAAdapterError *adapterError = [MaticooMediationAdapter toMaxLoadError: error];
         [delegate didFailToLoadAdViewAdWithError: adapterError];
         return;
     }
@@ -321,7 +336,7 @@
     if(!MAT_NSSTRING_NOT_NULL(placementIdentifier)) {
         NSError *error = [[NSError alloc]initWithDomain:@"The placementIdentifier of the native ad is empty." code:106 userInfo:nil];
         [MaticooMediationTrackManager trackMediationAdRequestFailed:placementIdentifier adType:NATIVE msg:error.description];
-        MAAdapterError *adapterError = [MaticooMediationAdapter toMaxError: error];
+        MAAdapterError *adapterError = [MaticooMediationAdapter toMaxLoadError: error];
         [delegate didFailToLoadNativeAdWithError: adapterError];
         return;
     }
@@ -415,14 +430,14 @@
 - (void)interstitialAd:(MATInterstitialAd *)interstitialAd didFailWithError:(NSError *)error{
     NSLog(@"interstitialAd didFailWithError, %@, %@", interstitialAd.placementID, error.description);
     [MaticooMediationTrackManager trackMediationAdRequestFailed:interstitialAd.placementID adType:INTERSTITIAL msg:error.description];
-    MAAdapterError *adapterError = [MaticooMediationAdapter toMaxError: error];
+    MAAdapterError *adapterError = [MaticooMediationAdapter toMaxLoadError: error];
     [self.delegate didFailToLoadInterstitialAdWithError: adapterError];
 }
 
 - (void)interstitialAd:(MATInterstitialAd *)interstitialAd displayFailWithError:(NSError *)error{
     NSLog(@"interstitialAd displayFailWithError, %@", error.description);
     [MaticooMediationTrackManager trackMediationAdImpFailed:interstitialAd.placementID adType:INTERSTITIAL msg:error.description];
-    MAAdapterError *adapterError = [MaticooMediationAdapter toMaxError: error];
+    MAAdapterError *adapterError = [MaticooMediationAdapter toMaxShowError: error];
     [self.delegate didFailToDisplayInterstitialAdWithError:adapterError];
 }
 
@@ -471,7 +486,7 @@
 }
 
 - (void)rewardedVideoAd:(MATRewardedVideoAd *)rewardedVideoAd didFailWithError:(NSError *)error{
-    MAAdapterError *adapterError = [MaticooMediationAdapter toMaxError: error];
+    MAAdapterError *adapterError = [MaticooMediationAdapter toMaxLoadError: error];
     [self.parentAdapter log: @"Rewarded ad (%@) failed to load with error: %@", rewardedVideoAd.placementID, adapterError];
     [self.delegate didFailToLoadRewardedAdWithError: adapterError];
     [MaticooMediationTrackManager trackMediationAdRequestFailed:rewardedVideoAd.placementID adType:REWARDEDVIDEO msg:error.description];
@@ -479,7 +494,7 @@
 
 - (void)rewardedVideoAd:(MATRewardedVideoAd *)rewardedVideoAd displayFailWithError:(NSError *)error{
     [self.parentAdapter log: @"Rewarded video displayFailWithError: %@", rewardedVideoAd.placementID];
-    MAAdapterError *adapterError = [MaticooMediationAdapter toMaxError: error];
+    MAAdapterError *adapterError = [MaticooMediationAdapter toMaxShowError: error];
     [self.delegate didFailToDisplayRewardedAdWithError: adapterError];
     [MaticooMediationTrackManager trackMediationAdImpFailed:rewardedVideoAd.placementID adType:REWARDEDVIDEO msg:error.description];
 }
@@ -543,7 +558,7 @@
 
 - (void)bannerAd:(nonnull MATBannerAd *)bannerAd didFailWithError:(nonnull NSError *)error {
     [MaticooMediationTrackManager trackMediationAdRequestFailed:bannerAd.placementID adType:BANNER msg:error.description];
-    MAAdapterError *adapterError = [MaticooMediationAdapter toMaxError: error];
+    MAAdapterError *adapterError = [MaticooMediationAdapter toMaxLoadError: error];
     [self.parentAdapter log: @"Banner (%@) failed to load with error: %@", bannerAd.placementID, adapterError];
     [self.delegate didFailToLoadAdViewAdWithError: adapterError];
 }
@@ -562,7 +577,7 @@
 
 - (void)bannerAd:(MATBannerAd *)bannerAd showFailWithError:(NSError *)error{
     [MaticooMediationTrackManager trackMediationAdImpFailed:bannerAd.placementID adType:BANNER msg:error.description];
-    MAAdapterError *adapterError = [MaticooMediationAdapter toMaxError: error];
+    MAAdapterError *adapterError = [MaticooMediationAdapter toMaxShowError: error];
     [self.parentAdapter log: @"Banner show failed: %@ and error:%@", bannerAd.placementID, error.description];
     if ([self.delegate respondsToSelector:@selector(didFailToDisplayAdViewAdWithError:)]) {
         [self.delegate didFailToDisplayAdViewAdWithError:adapterError];
@@ -605,7 +620,7 @@
 - (void)nativeAdFailed:(nonnull MATNativeAd *)nativeAd withError:(nonnull NSError *)error {
     [MaticooMediationTrackManager trackMediationAdRequestFailed:nativeAd.placementID adType:NATIVE msg:@""];
     [self.parentAdapter log: @"Native (%@) failed to load with error: %@", nativeAd.placementID, error];
-    MAAdapterError *adapterError = [MaticooMediationAdapter toMaxError: error];
+    MAAdapterError *adapterError = [MaticooMediationAdapter toMaxLoadError: error];
     [self.delegate didFailToLoadAdViewAdWithError: adapterError];
 }
 
