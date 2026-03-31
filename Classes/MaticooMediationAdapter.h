@@ -10,9 +10,6 @@
 #import <AppLovinSDK/AppLovinSDK.h>
 #import <MaticooSDK/MaticooAds.h>
 #import <MaticooSDK/MATInterstitialAd.h>
-#import <MaticooSDK/MATRewardedVideoAd.h>
-#import <MaticooSDK/MATNativeAd.h>
-#import <MaticooSDK/MATBannerAd.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -23,7 +20,7 @@ NS_ASSUME_NONNULL_BEGIN
 #define INTERACTIVE 5
 #define SPLASH 6
 
-@interface MaticooMediationAdapter : ALMediationAdapter <MATBannerAdDelegate, MATNativeAdDelegate, MATInterstitialAdDelegate, MATRewardedVideoAdDelegate>
+@interface MaticooMediationAdapter : ALMediationAdapter <MATInterstitialAdDelegate>
 
 @end
 
