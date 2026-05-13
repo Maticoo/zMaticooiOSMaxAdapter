@@ -14,9 +14,20 @@
 ([(str) isKindOfClass:[NSString class]] && ![(str) isEqualToString:@""])
 
 static NSString * const kAdapterSource = @"max";
-static const NSInteger kAdTypeBanner = 1;
-static const NSInteger kAdTypeInterstitial = 2;
-static const NSInteger kAdTypeRewardedVideo = 3;
+
+// 取代之前 header 里无前缀的 `#define BANNER/INTERSTITIAL/NATIVE/...`，避免预处理符号污染整个工程命名空间。
+typedef NS_ENUM(NSInteger, MATMaxAdapterAdType) {
+    MATMaxAdapterAdTypeBanner        = 1,
+    MATMaxAdapterAdTypeInterstitial  = 2,
+    MATMaxAdapterAdTypeRewardedVideo = 3,
+    MATMaxAdapterAdTypeNative        = 4,
+    MATMaxAdapterAdTypeInteractive   = 5,
+    MATMaxAdapterAdTypeSplash        = 6,
+};
+
+static const NSInteger kAdTypeBanner = MATMaxAdapterAdTypeBanner;
+static const NSInteger kAdTypeInterstitial = MATMaxAdapterAdTypeInterstitial;
+static const NSInteger kAdTypeRewardedVideo = MATMaxAdapterAdTypeRewardedVideo;
 
 static MAReward *MARewardFromMATRewardInfo(MATRewardInfo *rewardInfo) {
     NSInteger amount = rewardInfo.rewardAmount;
@@ -72,7 +83,7 @@ static NSString *MATAdTypeDes(NSString *placementId, NSInteger maticooAdType, NS
 @property (nonatomic, strong) MATBannerAd *bannerAdView;
 @property (nonatomic, strong) ALMaticooMediationAdapterAdViewDelegate *adViewAdapterDelegate;
 @property (nonatomic, copy) NSString *placementId;
-/// 最近一次发起加载的广告类型（`BANNER` / `INTERSTITIAL` / `REWARDEDVIDEO`），供 `adapter_destroy` 埋点使用。
+/// 最近一次发起加载的广告类型（`MATMaxAdapterAdTypeBanner` / `Interstitial` / `RewardedVideo`），供 `adapter_destroy` 埋点使用。
 @property (nonatomic, assign) NSInteger lastLoadedMaticooAdType;
 
 @end
@@ -234,11 +245,7 @@ static NSString *MATAdTypeDes(NSString *placementId, NSInteger maticooAdType, NS
     self.interstitialAdapterDelegate = [[ALMaticooMediationAdapterInterstitialAdDelegate alloc] initWithParentAdapter: self andNotify: delegate];
     self.interstitialAdapterDelegate.placementId = placementIdentifier;
     self.interstitial.delegate = self.interstitialAdapterDelegate;
-    if(parameters.localExtraParameters){
-        [self.interstitial loadAdExtraMap:parameters.localExtraParameters];
-    } else {
-        [self.interstitial loadAd];
-    }
+    [self.interstitial loadAd];
 }
 
 - (void)showInterstitialAdForParameters:(id<MAAdapterResponseParameters>)parameters andNotify:(id<MAInterstitialAdapterDelegate>)delegate
@@ -298,11 +305,7 @@ static NSString *MATAdTypeDes(NSString *placementId, NSInteger maticooAdType, NS
     self.rewardedAdapterDelegate = [[ALMaticooMediationAdapterRewardedAdDelegate alloc] initWithParentAdapter:self andNotify:delegate];
     self.rewardedAdapterDelegate.placementId = placementIdentifier;
     self.rewardedVideo.delegate = self.rewardedAdapterDelegate;
-    if (parameters.localExtraParameters) {
-        [self.rewardedVideo loadAdExtraMap:parameters.localExtraParameters];
-    } else {
-        [self.rewardedVideo loadAd];
-    }
+    [self.rewardedVideo loadAd];
 }
 
 - (void)showRewardedAdForParameters:(id<MAAdapterResponseParameters>)parameters andNotify:(id<MARewardedAdapterDelegate>)delegate
@@ -334,7 +337,7 @@ static NSString *MATAdTypeDes(NSString *placementId, NSInteger maticooAdType, NS
     BOOL isNative = [parameters.customParameters al_boolForKey:@"is_native"];
     if (isNative) {
         NSError *error = [[NSError alloc] initWithDomain:@"Maticoo MAX adapter: is_native (legacy MATNativeAd path) unavailable — MATNativeAd not implemented in zMaticoo yet." code:106 userInfo:nil];
-        [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATAdTypeDes(parameters.thirdPartyAdPlacementIdentifier ?: @"", (NSInteger)NATIVE, error.domain)];
+        [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATAdTypeDes(parameters.thirdPartyAdPlacementIdentifier ?: @"", MATMaxAdapterAdTypeNative, error.domain)];
         MAAdapterError *adapterError = [MaticooMediationAdapter toMaxLoadError:error];
         [delegate didFailToLoadAdViewAdWithError:adapterError];
         return;
@@ -361,6 +364,14 @@ static NSString *MATAdTypeDes(NSString *placementId, NSInteger maticooAdType, NS
         if (!strongSelf) return;
 
         CGSize adSize = [strongSelf adSizeFromAdFormat:adFormat];
+        if (CGSizeEqualToSize(adSize, CGSizeZero)) {
+            NSError *error = [[NSError alloc] initWithDomain:[NSString stringWithFormat:@"Unsupported MAAdFormat: %@", adFormat.label] code:106 userInfo:nil];
+            [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATAdTypeDes(placementIdentifier, kAdTypeBanner, error.domain)];
+            MAAdapterError *adapterError = [MaticooMediationAdapter toMaxLoadError:error];
+            [delegate didFailToLoadAdViewAdWithError:adapterError];
+            return;
+        }
+
         strongSelf.bannerAdView = [[MATBannerAd alloc] initWithPlacementID:placementIdentifier];
         if (!strongSelf.bannerAdView) {
             NSError *error = [[NSError alloc] initWithDomain:@"MATBannerAd init failed (empty placement?)." code:20106 userInfo:nil];
@@ -374,12 +385,7 @@ static NSString *MATAdTypeDes(NSString *placementId, NSInteger maticooAdType, NS
         strongSelf.adViewAdapterDelegate = [[ALMaticooMediationAdapterAdViewDelegate alloc] initWithParentAdapter:strongSelf andNotify:delegate];
         strongSelf.adViewAdapterDelegate.placementId = placementIdentifier;
         strongSelf.bannerAdView.delegate = strongSelf.adViewAdapterDelegate;
-        NSMutableDictionary *localExtra = [NSMutableDictionary dictionary];
-        localExtra[@"source"] = kAdapterSource;
-        if (parameters.localExtraParameters.count > 0) {
-            [localExtra addEntriesFromDictionary:parameters.localExtraParameters];
-        }
-        strongSelf.bannerAdView.localExtra = [localExtra copy];
+        // can_close_ad 仍从 localExtraParameters 单独读取（已 isKindOfClass 校验类型），不进入 localExtra 字典。
         id canCloseObj = parameters.localExtraParameters[@"can_close_ad"];
         if ([canCloseObj isKindOfClass:[NSNumber class]]) {
             strongSelf.bannerAdView.canCloseAd = [(NSNumber *)canCloseObj boolValue];
@@ -390,6 +396,7 @@ static NSString *MATAdTypeDes(NSString *placementId, NSInteger maticooAdType, NS
     });
 }
 
+// 不支持的格式返回 CGSizeZero，由调用方走失败回调，避免抛 NSException 导致 MAX 主线程崩溃。
 - (CGSize)adSizeFromAdFormat:(MAAdFormat *)adFormat {
     if (adFormat == MAAdFormat.banner) {
         return CGSizeMake(320, 50);
@@ -397,16 +404,25 @@ static NSString *MATAdTypeDes(NSString *placementId, NSInteger maticooAdType, NS
     if (adFormat == MAAdFormat.mrec) {
         return CGSizeMake(300, 250);
     }
-    [NSException raise:NSInvalidArgumentException format:@"Unsupported ad format: %@", adFormat];
+    if (adFormat == MAAdFormat.leader) {
+        return CGSizeMake(728, 90);
+    }
     return CGSizeZero;
 }
 
 - (void)dealloc {
     NSInteger destroyAdType = self.lastLoadedMaticooAdType;
-    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_destroy" des:MATAdTypeDes(self.placementId, destroyAdType, nil)];
-    MATBannerAd *ad = self.bannerAdView;
-    self.bannerAdView.delegate = nil;
-    self.bannerAdView = nil;
+    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_destroy" des:MATAdTypeDes(_placementId, destroyAdType, nil)];
+
+    // 直接读写 ivar，dealloc 中避免走 KVO/setter；与 banner 对称地把 interstitial/rewarded 的 delegate 也断开，防止挂起回调命中野指针。
+    _interstitial.delegate = nil;
+    _interstitial = nil;
+    _rewardedVideo.delegate = nil;
+    _rewardedVideo = nil;
+
+    MATBannerAd *ad = _bannerAdView;
+    _bannerAdView.delegate = nil;
+    _bannerAdView = nil;
     if (ad) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [ad destroy];

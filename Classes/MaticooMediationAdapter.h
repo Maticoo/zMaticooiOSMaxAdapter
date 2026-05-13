@@ -15,13 +15,6 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-#define BANNER 1
-#define INTERSTITIAL 2
-#define REWARDEDVIDEO 3
-#define NATIVE 4
-#define INTERACTIVE 5
-#define SPLASH 6
-
 @interface MaticooMediationAdapter : ALMediationAdapter
 
 @end
