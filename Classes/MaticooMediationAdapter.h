@@ -12,10 +12,11 @@
 #import <MaticooSDK/MATInterstitialAd.h>
 #import <MaticooSDK/MATBannerAd.h>
 #import <MaticooSDK/MATRewardedVideoAd.h>
+#import <MaticooSDK/MATNativeAd.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface MaticooMediationAdapter : ALMediationAdapter
+@interface MaticooMediationAdapter : ALMediationAdapter <MANativeAdAdapter>
 
 @end
 

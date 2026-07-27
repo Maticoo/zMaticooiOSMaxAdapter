@@ -8,7 +8,11 @@
 
 #import "MaticooMediationAdapter.h"
 #import "MaticooMaxAdapterDebugLog.h"
-#define ADAPTER_VERSION @"2.1.0"
+#import <MaticooSDK/MATAdChoicesView.h>
+#import <MaticooSDK/MATAdImage.h>
+#import <MaticooSDK/MATMediaContent.h>
+#import <MaticooSDK/MATMediaView.h>
+#define ADAPTER_VERSION @"2.2.0"
 
 #define MAT_NSSTRING_NOT_NULL(str)\
 ([(str) isKindOfClass:[NSString class]] && ![(str) isEqualToString:@""])
@@ -28,6 +32,7 @@ typedef NS_ENUM(NSInteger, MATMaxAdapterAdType) {
 static const NSInteger kAdTypeBanner = MATMaxAdapterAdTypeBanner;
 static const NSInteger kAdTypeInterstitial = MATMaxAdapterAdTypeInterstitial;
 static const NSInteger kAdTypeRewardedVideo = MATMaxAdapterAdTypeRewardedVideo;
+static const NSInteger kAdTypeNative = MATMaxAdapterAdTypeNative;
 
 static MAReward *MARewardFromMATRewardInfo(MATRewardInfo *rewardInfo) {
     NSInteger amount = rewardInfo.rewardAmount;
@@ -74,6 +79,40 @@ static NSString *MATAdTypeDes(NSString *placementId, NSInteger maticooAdType, NS
 - (instancetype)initWithParentAdapter:(MaticooMediationAdapter *)parentAdapter andNotify:(id<MARewardedAdapterDelegate>)delegate;
 @end
 
+static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
+
+@interface ALMaticooMediationAdapterNativeAdDelegate : NSObject <MATNativeAdDelegate>
+@property (nonatomic, weak) MaticooMediationAdapter *parentAdapter;
+@property (nonatomic, strong) id<MANativeAdAdapterDelegate> delegate;
+@property (nonatomic, copy) NSString *placementId;
+/// 与 AdMob/TopOn 对齐：图片素材时不注入 MATMediaView，走主图自渲染。
+@property (nonatomic, assign) BOOL useImageSelfRender;
+- (instancetype)initWithParentAdapter:(MaticooMediationAdapter *)parentAdapter andNotify:(id<MANativeAdAdapterDelegate>)delegate;
+@end
+
+/// MAX 要求子类覆盖 prepareForInteraction，才能把渲染后的 container / clickableViews 交给下游 SDK 注册。
+@interface ALMaticooMANativeAd : MANativeAd
+@property (nonatomic, strong) MATNativeAd *maticooNativeAd;
+@property (nonatomic, strong, nullable) MATMediaView *maticooMediaView;
+@property (nonatomic, copy) NSString *placementId;
+@end
+
+@implementation ALMaticooMANativeAd
+
+- (BOOL)prepareForInteractionClickableViews:(NSArray<UIView *> *)clickableViews withContainer:(UIView *)container {
+    if (!self.maticooNativeAd || !container) {
+        return NO;
+    }
+    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_show"
+                                                       des:MATAdTypeDes(self.placementId, kAdTypeNative, nil)];
+    [self.maticooNativeAd registerViewForInteraction:container
+                                           mediaView:self.maticooMediaView
+                                      clickableViews:clickableViews];
+    return YES;
+}
+
+@end
+
 @interface MaticooMediationAdapter ()
 
 @property (nonatomic, strong) MATInterstitialAd *interstitial;
@@ -82,8 +121,10 @@ static NSString *MATAdTypeDes(NSString *placementId, NSInteger maticooAdType, NS
 @property (nonatomic, strong) ALMaticooMediationAdapterRewardedAdDelegate *rewardedAdapterDelegate;
 @property (nonatomic, strong) MATBannerAd *bannerAdView;
 @property (nonatomic, strong) ALMaticooMediationAdapterAdViewDelegate *adViewAdapterDelegate;
+@property (nonatomic, strong) MATNativeAd *nativeAdInstance;
+@property (nonatomic, strong) ALMaticooMediationAdapterNativeAdDelegate *nativeAdapterDelegate;
 @property (nonatomic, copy) NSString *placementId;
-/// 最近一次发起加载的广告类型（`MATMaxAdapterAdTypeBanner` / `Interstitial` / `RewardedVideo`），供 `adapter_destroy` 埋点使用。
+/// 最近一次发起加载的广告类型（`MATMaxAdapterAdTypeBanner` / `Interstitial` / `RewardedVideo` / `Native`），供 `adapter_destroy` 埋点使用。
 @property (nonatomic, assign) NSInteger lastLoadedMaticooAdType;
 
 @end
@@ -327,22 +368,13 @@ static NSString *MATAdTypeDes(NSString *placementId, NSInteger maticooAdType, NS
     }
 }
 
-// 老版 iOS MAX（≈1.1.6）：`is_native` → `MATNativeAd` + `renderTrueNativeAd:` 等；当前 zMaticoo `MATNativeAd` 为桩，`is_native` 仅失败返回以免误走 Banner。
+// v2.2.0：移除老版 is_native 早失败分支；Native 由 loadNativeAdForParameters:andNotify: 处理（MAAdViewAdapter 仅负责 Banner/MREC）。
 #pragma mark - MAAdViewAdapter (Banner / MREC)
 
 - (void)loadAdViewAdForParameters:(id<MAAdapterResponseParameters>)parameters
                          adFormat:(MAAdFormat *)adFormat
                         andNotify:(id<MAAdViewAdapterDelegate>)delegate
 {
-    BOOL isNative = [parameters.customParameters al_boolForKey:@"is_native"];
-    if (isNative) {
-        NSError *error = [[NSError alloc] initWithDomain:@"Maticoo MAX adapter: is_native (legacy MATNativeAd path) unavailable — MATNativeAd not implemented in zMaticoo yet." code:106 userInfo:nil];
-        [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATAdTypeDes(parameters.thirdPartyAdPlacementIdentifier ?: @"", MATMaxAdapterAdTypeNative, error.domain)];
-        MAAdapterError *adapterError = [MaticooMediationAdapter toMaxLoadError:error];
-        [delegate didFailToLoadAdViewAdWithError:adapterError];
-        return;
-    }
-
     NSString *placementIdentifier = parameters.thirdPartyAdPlacementIdentifier;
     if (!MAT_NSSTRING_NOT_NULL(placementIdentifier)) {
         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATAdTypeDes(@"", kAdTypeBanner, @"placementIdentifier is empty")];
@@ -396,6 +428,55 @@ static NSString *MATAdTypeDes(NSString *placementId, NSInteger maticooAdType, NS
     });
 }
 
+#pragma mark - MANativeAdAdapter
+
+- (void)loadNativeAdForParameters:(id<MAAdapterResponseParameters>)parameters andNotify:(id<MANativeAdAdapterDelegate>)delegate {
+    NSString *placementIdentifier = parameters.thirdPartyAdPlacementIdentifier;
+    if (!MAT_NSSTRING_NOT_NULL(placementIdentifier)) {
+        [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed"
+                                                           des:MATAdTypeDes(placementIdentifier, kAdTypeNative, @"placementIdentifier is empty")];
+        NSError *error = [[NSError alloc] initWithDomain:@"The placementIdentifier of the native ad is empty." code:106 userInfo:nil];
+        MAAdapterError *adapterError = [MaticooMediationAdapter toMaxLoadError:error];
+        [delegate didFailToLoadNativeAdWithError:adapterError];
+        return;
+    }
+    self.placementId = placementIdentifier;
+    self.lastLoadedMaticooAdType = kAdTypeNative;
+    [MaticooMediationAdapter applyMaxPrivacyIfPresent];
+
+    [self log:@"Loading native ad: %@...", placementIdentifier];
+    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load"
+                                                       des:MATAdTypeDes(placementIdentifier, kAdTypeNative, nil)];
+
+    BOOL useImageSelfRender = NO;
+    id useImageSelfRenderObj = parameters.localExtraParameters[kUseImageSelfRenderKey];
+    if ([useImageSelfRenderObj isKindOfClass:[NSNumber class]]) {
+        useImageSelfRender = [(NSNumber *)useImageSelfRenderObj boolValue];
+    } else if ([useImageSelfRenderObj isKindOfClass:[NSString class]]) {
+        useImageSelfRender = [(NSString *)useImageSelfRenderObj boolValue];
+    }
+
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf.nativeAdInstance = [[MATNativeAd alloc] initWithPlacementID:placementIdentifier];
+        if (!strongSelf.nativeAdInstance) {
+            NSError *error = [[NSError alloc] initWithDomain:@"MATNativeAd init failed (empty placement?)." code:20106 userInfo:nil];
+            [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed"
+                                                               des:MATAdTypeDes(placementIdentifier, kAdTypeNative, error.domain)];
+            MAAdapterError *adapterError = [MaticooMediationAdapter toMaxLoadError:error];
+            [delegate didFailToLoadNativeAdWithError:adapterError];
+            return;
+        }
+        strongSelf.nativeAdapterDelegate = [[ALMaticooMediationAdapterNativeAdDelegate alloc] initWithParentAdapter:strongSelf andNotify:delegate];
+        strongSelf.nativeAdapterDelegate.placementId = placementIdentifier;
+        strongSelf.nativeAdapterDelegate.useImageSelfRender = useImageSelfRender;
+        strongSelf.nativeAdInstance.delegate = strongSelf.nativeAdapterDelegate;
+        [strongSelf.nativeAdInstance loadAd];
+    });
+}
+
 // 不支持的格式返回 CGSizeZero，由调用方走失败回调，避免抛 NSException 导致 MAX 主线程崩溃。
 - (CGSize)adSizeFromAdFormat:(MAAdFormat *)adFormat {
     if (adFormat == MAAdFormat.banner) {
@@ -411,7 +492,7 @@ static NSString *MATAdTypeDes(NSString *placementId, NSInteger maticooAdType, NS
 }
 
 - (void)dealloc {
-    NSInteger destroyAdType = self.lastLoadedMaticooAdType;
+    NSInteger destroyAdType = _lastLoadedMaticooAdType;
     [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_destroy" des:MATAdTypeDes(_placementId, destroyAdType, nil)];
 
     // 直接读写 ivar，dealloc 中避免走 KVO/setter；与 banner 对称地把 interstitial/rewarded 的 delegate 也断开，防止挂起回调命中野指针。
@@ -426,6 +507,15 @@ static NSString *MATAdTypeDes(NSString *placementId, NSInteger maticooAdType, NS
     if (ad) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [ad destroy];
+        });
+    }
+
+    MATNativeAd *nativeAd = _nativeAdInstance;
+    _nativeAdInstance.delegate = nil;
+    _nativeAdInstance = nil;
+    if (nativeAd) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [nativeAd destroy];
         });
     }
 }
@@ -620,6 +710,94 @@ static NSString *MATAdTypeDes(NSString *placementId, NSInteger maticooAdType, NS
     [self.parentAdapter log:@"Banner dismissed (hidden): %@", bannerAd.placementID];
     if ([self.delegate respondsToSelector:@selector(didHideAdViewAd)]) {
         [self.delegate didHideAdViewAd];
+    }
+}
+
+@end
+
+@implementation ALMaticooMediationAdapterNativeAdDelegate
+
+- (instancetype)initWithParentAdapter:(MaticooMediationAdapter *)parentAdapter andNotify:(id<MANativeAdAdapterDelegate>)delegate {
+    self = [super init];
+    if (self) {
+        self.parentAdapter = parentAdapter;
+        self.delegate = delegate;
+    }
+    return self;
+}
+
+- (void)nativeAdLoadSuccess:(MATNativeAd *)nativeAd {
+    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_success"
+                                                       des:MATAdTypeDes(self.placementId, kAdTypeNative, nil)];
+    MATNativeAdElements *e = nativeAd.nativeElements;
+    __block MATMediaView *mediaView = nil;
+    ALMaticooMANativeAd *maNativeAd = [[ALMaticooMANativeAd alloc] initWithFormat:MAAdFormat.native builderBlock:^(MANativeAdBuilder * _Nonnull builder) {
+        builder.title = e.headline;
+        builder.advertiser = e.advertiser;
+        builder.body = e.body;
+        builder.callToAction = e.callToAction;
+        if (e.icon.image) {
+            builder.icon = [[MANativeAdImage alloc] initWithImage:e.icon.image];
+        } else if (e.icon.imageURL) {
+            builder.icon = [[MANativeAdImage alloc] initWithURL:e.icon.imageURL];
+        }
+        MATAdImage *mainImg = e.images.firstObject;
+        if (mainImg.image) {
+            builder.mainImage = [[MANativeAdImage alloc] initWithImage:mainImg.image];
+        } else if (mainImg.imageURL) {
+            builder.mainImage = [[MANativeAdImage alloc] initWithURL:mainImg.imageURL];
+        }
+        if (e.mediaContent.aspectRatio > 0) {
+            builder.mediaContentAspectRatio = e.mediaContent.aspectRatio;
+        }
+        // 与 AdMob/TopOn 一致：有视频始终给 MATMediaView；图片 + use_image_self_render 时不建 mediaView，走 mainImage。
+        if (e.mediaContent.hasVideoContent) {
+            mediaView = [[MATMediaView alloc] init];
+            mediaView.clipsToBounds = YES;
+            builder.mediaView = mediaView;
+        } else if (self.useImageSelfRender) {
+            mediaView = nil;
+            builder.mediaView = nil;
+        } else {
+            mediaView = [[MATMediaView alloc] init];
+            mediaView.clipsToBounds = YES;
+            builder.mediaView = mediaView;
+        }
+
+        MATAdChoicesView *adChoicesView = [[MATAdChoicesView alloc] init];
+        [adChoicesView setNativeAd:nativeAd];
+        builder.optionsView = adChoicesView;
+    }];
+    maNativeAd.maticooNativeAd = nativeAd;
+    maNativeAd.maticooMediaView = mediaView;
+    maNativeAd.placementId = self.placementId;
+    [self.delegate didLoadAdForNativeAd:maNativeAd withExtraInfo:nil];
+}
+
+- (void)nativeAdFailed:(MATNativeAd *)nativeAd withError:(NSError *)error {
+    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed"
+                                                       des:MATAdTypeDes(self.placementId, kAdTypeNative, error.localizedDescription)];
+    [self.delegate didFailToLoadNativeAdWithError:[MaticooMediationAdapter toMaxLoadError:error]];
+}
+
+- (void)nativeAdDisplayed:(MATNativeAd *)nativeAd {
+    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_imp"
+                                                       des:MATAdTypeDes(self.placementId, kAdTypeNative, nil)];
+    [self.delegate didDisplayNativeAdWithExtraInfo:nil];
+}
+
+- (void)nativeAd:(MATNativeAd *)nativeAd displayFailWithError:(NSError *)error {
+    (void)nativeAd;
+    // MAX Native adapter delegate 无 didFailToDisplay*，只能上报 adapter 埋点。
+    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_show_failed"
+                                                       des:MATAdTypeDes(self.placementId, kAdTypeNative, error.localizedDescription)];
+}
+
+- (void)nativeAdClicked:(MATNativeAd *)nativeAd {
+    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_click"
+                                                       des:MATAdTypeDes(self.placementId, kAdTypeNative, nil)];
+    if ([self.delegate respondsToSelector:@selector(didClickNativeAd)]) {
+        [self.delegate didClickNativeAd];
     }
 }
 
