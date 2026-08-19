@@ -14,7 +14,7 @@
 #import <MaticooSDK/MATMediaView.h>
 #import <MaticooSDK/MATNativeAdOptions.h>
 #import <MaticooSDK/MATVideoOptions.h>
-#define ADAPTER_VERSION @"2.2.0"
+#define ADAPTER_VERSION @"2.3.0"
 
 #define MAT_NSSTRING_NOT_NULL(str)\
 ([(str) isKindOfClass:[NSString class]] && ![(str) isEqualToString:@""])
