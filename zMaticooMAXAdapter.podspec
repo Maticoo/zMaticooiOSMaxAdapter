@@ -16,7 +16,7 @@ Pod::Spec.new do |spec|
   #
 
   spec.name         = "zMaticooMAXAdapter"
-  spec.version      = "2.2.0"
+  spec.version      = "2.3.0"
   spec.summary      = "zMaticoo iOS SDK MAX Adapter."
 
   # This description is used to generate tags and improve search results.
@@ -42,7 +42,7 @@ Pod::Spec.new do |spec|
   #spec.license      = "MIT (example)"
    spec.license      = { :type => "MIT", :file => "LICENSE" }
    spec.dependency 'AppLovinSDK'
-   spec.dependency 'zMaticoo'
+   spec.dependency 'zMaticoo', '>= 2.3.0'
    spec.static_framework = true
 
 

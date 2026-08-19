@@ -12,6 +12,8 @@
 #import <MaticooSDK/MATAdImage.h>
 #import <MaticooSDK/MATMediaContent.h>
 #import <MaticooSDK/MATMediaView.h>
+#import <MaticooSDK/MATNativeAdOptions.h>
+#import <MaticooSDK/MATVideoOptions.h>
 #define ADAPTER_VERSION @"2.2.0"
 
 #define MAT_NSSTRING_NOT_NULL(str)\
@@ -58,6 +60,37 @@ static NSString *MATAdTypeDes(NSString *placementId, NSInteger maticooAdType, NS
     return data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : @"";
 }
 
+/// `parameters.localExtraParameters` 原样交给 `-loadAdExtraMap:`，这里不挑 key、不改写值。
+static NSDictionary<NSString *, id> *MATLoadExtraMapFromLocalExtraParameters(NSDictionary *localExtraParameters) {
+    return [localExtraParameters isKindOfClass:[NSDictionary class]] ? localExtraParameters : nil;
+}
+
+/// 读取字典里的 `is_muted`；`NSNumber` 或 `"true"`/`"false"`，非法或缺省返回 nil。
+static NSNumber * _Nullable MATMutedFromExtraDictionary(NSDictionary *extra) {
+    if (![extra isKindOfClass:[NSDictionary class]]) {
+        return nil;
+    }
+    id value = extra[@"is_muted"];
+    if ([value isKindOfClass:[NSNumber class]]) {
+        return value;
+    }
+    if ([value isKindOfClass:[NSString class]]) {
+        NSString *text = [(NSString *)value stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if ([text caseInsensitiveCompare:@"true"] == NSOrderedSame) {
+            return @YES;
+        }
+        if ([text caseInsensitiveCompare:@"false"] == NSOrderedSame) {
+            return @NO;
+        }
+    }
+    return nil;
+}
+
+/// 读取 `localExtraParameters[@"is_muted"]`。
+static NSNumber * _Nullable MATMutedFromLocalExtraParameters(NSDictionary *localExtraParameters) {
+    return MATMutedFromExtraDictionary(localExtraParameters);
+}
+
 @interface ALMaticooMediationAdapterInterstitialAdDelegate : NSObject <MATInterstitialAdDelegate>
 @property (nonatomic,   weak) MaticooMediationAdapter *parentAdapter;
 @property (nonatomic, strong) id<MAInterstitialAdapterDelegate> delegate;
@@ -99,15 +132,59 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
 
 @implementation ALMaticooMANativeAd
 
+// MAX 可能在非主线程调 prepareForInteraction，而 load 回调线程写这两个 strong 指针。
+// ARC 并发读写 nonatomic strong 会读到哨兵 0x400000000000bad0，读写必须同锁。
+@synthesize maticooNativeAd = _maticooNativeAd;
+@synthesize maticooMediaView = _maticooMediaView;
+@synthesize placementId = _placementId;
+
+- (MATNativeAd *)maticooNativeAd {
+    @synchronized (self) {
+        return _maticooNativeAd;
+    }
+}
+
+- (void)setMaticooNativeAd:(MATNativeAd *)maticooNativeAd {
+    @synchronized (self) {
+        _maticooNativeAd = maticooNativeAd;
+    }
+}
+
+- (MATMediaView *)maticooMediaView {
+    @synchronized (self) {
+        return _maticooMediaView;
+    }
+}
+
+- (void)setMaticooMediaView:(MATMediaView *)maticooMediaView {
+    @synchronized (self) {
+        _maticooMediaView = maticooMediaView;
+    }
+}
+
+- (NSString *)placementId {
+    @synchronized (self) {
+        return _placementId;
+    }
+}
+
+- (void)setPlacementId:(NSString *)placementId {
+    @synchronized (self) {
+        _placementId = [placementId copy];
+    }
+}
+
 - (BOOL)prepareForInteractionClickableViews:(NSArray<UIView *> *)clickableViews withContainer:(UIView *)container {
-    if (!self.maticooNativeAd || !container) {
+    MATNativeAd *nativeAd = self.maticooNativeAd;
+    MATMediaView *mediaView = self.maticooMediaView;
+    if (!nativeAd || !container) {
         return NO;
     }
     [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_show"
                                                        des:MATAdTypeDes(self.placementId, kAdTypeNative, nil)];
-    [self.maticooNativeAd registerViewForInteraction:container
-                                           mediaView:self.maticooMediaView
-                                      clickableViews:clickableViews];
+    [nativeAd registerViewForInteraction:container
+                               mediaView:mediaView
+                          clickableViews:clickableViews];
     return YES;
 }
 
@@ -132,6 +209,127 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
 
 @implementation MaticooMediationAdapter
 
+// 广告对象与 nested delegate 在 load 线程写，MAX 可能在其它线程读 show / isReady / prepareForInteraction。
+// ARC 并发读写 nonatomic strong 会读到哨兵指针 0x400000000000bad0，读写必须同锁。
+// 持锁只保护指针交换；拿到局部变量后再调 SDK，不要在 @synchronized(self) 内调外部方法。
+@synthesize interstitial = _interstitial;
+@synthesize interstitialAdapterDelegate = _interstitialAdapterDelegate;
+@synthesize rewardedVideo = _rewardedVideo;
+@synthesize rewardedAdapterDelegate = _rewardedAdapterDelegate;
+@synthesize bannerAdView = _bannerAdView;
+@synthesize adViewAdapterDelegate = _adViewAdapterDelegate;
+@synthesize nativeAdInstance = _nativeAdInstance;
+@synthesize nativeAdapterDelegate = _nativeAdapterDelegate;
+@synthesize placementId = _placementId;
+
+- (MATInterstitialAd *)interstitial {
+    @synchronized (self) {
+        return _interstitial;
+    }
+}
+
+- (void)setInterstitial:(MATInterstitialAd *)interstitial {
+    @synchronized (self) {
+        _interstitial = interstitial;
+    }
+}
+
+- (ALMaticooMediationAdapterInterstitialAdDelegate *)interstitialAdapterDelegate {
+    @synchronized (self) {
+        return _interstitialAdapterDelegate;
+    }
+}
+
+- (void)setInterstitialAdapterDelegate:(ALMaticooMediationAdapterInterstitialAdDelegate *)interstitialAdapterDelegate {
+    @synchronized (self) {
+        _interstitialAdapterDelegate = interstitialAdapterDelegate;
+    }
+}
+
+- (MATRewardedVideoAd *)rewardedVideo {
+    @synchronized (self) {
+        return _rewardedVideo;
+    }
+}
+
+- (void)setRewardedVideo:(MATRewardedVideoAd *)rewardedVideo {
+    @synchronized (self) {
+        _rewardedVideo = rewardedVideo;
+    }
+}
+
+- (ALMaticooMediationAdapterRewardedAdDelegate *)rewardedAdapterDelegate {
+    @synchronized (self) {
+        return _rewardedAdapterDelegate;
+    }
+}
+
+- (void)setRewardedAdapterDelegate:(ALMaticooMediationAdapterRewardedAdDelegate *)rewardedAdapterDelegate {
+    @synchronized (self) {
+        _rewardedAdapterDelegate = rewardedAdapterDelegate;
+    }
+}
+
+- (MATBannerAd *)bannerAdView {
+    @synchronized (self) {
+        return _bannerAdView;
+    }
+}
+
+- (void)setBannerAdView:(MATBannerAd *)bannerAdView {
+    @synchronized (self) {
+        _bannerAdView = bannerAdView;
+    }
+}
+
+- (ALMaticooMediationAdapterAdViewDelegate *)adViewAdapterDelegate {
+    @synchronized (self) {
+        return _adViewAdapterDelegate;
+    }
+}
+
+- (void)setAdViewAdapterDelegate:(ALMaticooMediationAdapterAdViewDelegate *)adViewAdapterDelegate {
+    @synchronized (self) {
+        _adViewAdapterDelegate = adViewAdapterDelegate;
+    }
+}
+
+- (MATNativeAd *)nativeAdInstance {
+    @synchronized (self) {
+        return _nativeAdInstance;
+    }
+}
+
+- (void)setNativeAdInstance:(MATNativeAd *)nativeAdInstance {
+    @synchronized (self) {
+        _nativeAdInstance = nativeAdInstance;
+    }
+}
+
+- (ALMaticooMediationAdapterNativeAdDelegate *)nativeAdapterDelegate {
+    @synchronized (self) {
+        return _nativeAdapterDelegate;
+    }
+}
+
+- (void)setNativeAdapterDelegate:(ALMaticooMediationAdapterNativeAdDelegate *)nativeAdapterDelegate {
+    @synchronized (self) {
+        _nativeAdapterDelegate = nativeAdapterDelegate;
+    }
+}
+
+- (NSString *)placementId {
+    @synchronized (self) {
+        return _placementId;
+    }
+}
+
+- (void)setPlacementId:(NSString *)placementId {
+    @synchronized (self) {
+        _placementId = [placementId copy];
+    }
+}
+
 /// MAX `doNotSell`, `userConsentSet`
 + (void)applyMaxPrivacyIfPresent {
     if ([ALPrivacySettings isDoNotSellSet]) {
@@ -144,6 +342,24 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
             [[MaticooAds shareSDK] setConsentStatus:[ALPrivacySettings hasUserConsent]];
         }
     }
+}
+
+/// MAX 全局静音：优先 `serverParameters[@"is_muted"]`，否则 `ALSdk.settings.muted` → `MaticooAds.videoMute`（仅全屏，不影响 Native）
++ (void)applyMaxGlobalVideoMuteWithServerParameters:(NSDictionary *)serverParameters {
+    NSNumber *serverMuted = MATMutedFromExtraDictionary(serverParameters);
+    MaticooAds *sdk = [MaticooAds shareSDK];
+    if (serverMuted != nil) {
+        sdk.videoMute = serverMuted.boolValue;
+        MaticooMaxAdapterDebugLog(@"MAX server is_muted=%d -> MaticooAds.videoMute", serverMuted.boolValue);
+        return;
+    }
+    BOOL muted = [ALSdk shared].settings.muted;
+    sdk.videoMute = muted;
+    MaticooMaxAdapterDebugLog(@"MAX settings.muted=%d -> MaticooAds.videoMute", muted);
+}
+
++ (void)applyMaxGlobalVideoMute {
+    [self applyMaxGlobalVideoMuteWithServerParameters:nil];
 }
 
 #pragma mark - MAAdapter Methods
@@ -163,6 +379,7 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
     MaticooMaxAdapterDebugLog(@"Initializing Maticoo SDK with app key: %@...", appKey);
     // Override point for customization after application launch.
     [MaticooMediationAdapter applyMaxPrivacyIfPresent];
+    [MaticooMediationAdapter applyMaxGlobalVideoMuteWithServerParameters:parameters.serverParameters];
     [[MaticooAds shareSDK] setMediationName:@"max"];
     [[MaticooAds shareSDK] initSDK:appKey onSuccess:^() {
         completionHandler(MAAdapterInitializationStatusInitializedSuccess, nil);
@@ -282,18 +499,27 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
     MaticooMaxAdapterDebugLog(@"Loading interstitial ad: %@...", placementIdentifier);
     [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load" des:MATAdTypeDes(placementIdentifier, kAdTypeInterstitial, nil)];
     
-    self.interstitial = [[MATInterstitialAd alloc] initWithPlacementID:placementIdentifier];
-    self.interstitialAdapterDelegate = [[ALMaticooMediationAdapterInterstitialAdDelegate alloc] initWithParentAdapter: self andNotify: delegate];
-    self.interstitialAdapterDelegate.placementId = placementIdentifier;
-    self.interstitial.delegate = self.interstitialAdapterDelegate;
-    [self.interstitial loadAd];
+    MATInterstitialAd *interstitial = [[MATInterstitialAd alloc] initWithPlacementID:placementIdentifier];
+    ALMaticooMediationAdapterInterstitialAdDelegate *adapterDelegate =
+        [[ALMaticooMediationAdapterInterstitialAdDelegate alloc] initWithParentAdapter:self andNotify:delegate];
+    adapterDelegate.placementId = placementIdentifier;
+    self.interstitial = interstitial;
+    self.interstitialAdapterDelegate = adapterDelegate;
+    interstitial.delegate = adapterDelegate;
+    NSNumber *isMuted = MATMutedFromLocalExtraParameters(parameters.localExtraParameters);
+    if (isMuted != nil) {
+        interstitial.videoMute = isMuted.boolValue;
+    }
+    [interstitial loadAdExtraMap:MATLoadExtraMapFromLocalExtraParameters(parameters.localExtraParameters)];
 }
 
 - (void)showInterstitialAdForParameters:(id<MAAdapterResponseParameters>)parameters andNotify:(id<MAInterstitialAdapterDelegate>)delegate
 {
     [self log: @"Showing interstitial: %@...", parameters.thirdPartyAdPlacementIdentifier];
+    MATInterstitialAd *interstitial = self.interstitial;
     // Check if ad is already expired or invalidated, and do not show ad if that is the case. You will not get paid to show an invalidated ad.
-    if (self.interstitial.isReady){
+    if (interstitial.isReady){
+        [MaticooMediationAdapter applyMaxPrivacyIfPresent];
         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_show" des:MATAdTypeDes(parameters.thirdPartyAdPlacementIdentifier, kAdTypeInterstitial, nil)];
         UIViewController *presentingViewController;
         if ( ALSdk.versionCode >= 11020199 )
@@ -304,7 +530,7 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
         {
             presentingViewController = [ALUtils topViewControllerFromKeyWindow];
         }
-        [self.interstitial showAdFromViewController:presentingViewController];
+        [interstitial showAdFromViewController:presentingViewController];
     }
     else
     {
@@ -334,25 +560,34 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
     [self log:@"Loading rewarded ad: %@...", placementIdentifier];
     [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load" des:MATAdTypeDes(placementIdentifier, kAdTypeRewardedVideo, nil)];
 
-    self.rewardedVideo = [[MATRewardedVideoAd alloc] initWithPlacementID:placementIdentifier];
-    if (!self.rewardedVideo) {
+    MATRewardedVideoAd *rewardedVideo = [[MATRewardedVideoAd alloc] initWithPlacementID:placementIdentifier];
+    if (!rewardedVideo) {
         NSError *error = [[NSError alloc] initWithDomain:@"MATRewardedVideoAd init failed (empty placement?)." code:20106 userInfo:nil];
         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATAdTypeDes(placementIdentifier, kAdTypeRewardedVideo, error.domain)];
         MAAdapterError *adapterError = [MaticooMediationAdapter toMaxLoadError:error];
         [delegate didFailToLoadRewardedAdWithError:adapterError];
         return;
     }
+    self.rewardedVideo = rewardedVideo;
 
-    self.rewardedAdapterDelegate = [[ALMaticooMediationAdapterRewardedAdDelegate alloc] initWithParentAdapter:self andNotify:delegate];
-    self.rewardedAdapterDelegate.placementId = placementIdentifier;
-    self.rewardedVideo.delegate = self.rewardedAdapterDelegate;
-    [self.rewardedVideo loadAd];
+    ALMaticooMediationAdapterRewardedAdDelegate *adapterDelegate =
+        [[ALMaticooMediationAdapterRewardedAdDelegate alloc] initWithParentAdapter:self andNotify:delegate];
+    adapterDelegate.placementId = placementIdentifier;
+    self.rewardedAdapterDelegate = adapterDelegate;
+    rewardedVideo.delegate = adapterDelegate;
+    NSNumber *isMuted = MATMutedFromLocalExtraParameters(parameters.localExtraParameters);
+    if (isMuted != nil) {
+        rewardedVideo.videoMute = isMuted.boolValue;
+    }
+    [rewardedVideo loadAdExtraMap:MATLoadExtraMapFromLocalExtraParameters(parameters.localExtraParameters)];
 }
 
 - (void)showRewardedAdForParameters:(id<MAAdapterResponseParameters>)parameters andNotify:(id<MARewardedAdapterDelegate>)delegate
 {
     [self log:@"Showing rewarded: %@...", parameters.thirdPartyAdPlacementIdentifier];
-    if (self.rewardedVideo.isReady) {
+    MATRewardedVideoAd *rewardedVideo = self.rewardedVideo;
+    if (rewardedVideo.isReady) {
+        [MaticooMediationAdapter applyMaxPrivacyIfPresent];
         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_show" des:MATAdTypeDes(parameters.thirdPartyAdPlacementIdentifier, kAdTypeRewardedVideo, nil)];
         UIViewController *presentingViewController;
         if (ALSdk.versionCode >= 11020199) {
@@ -360,7 +595,7 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
         } else {
             presentingViewController = [ALUtils topViewControllerFromKeyWindow];
         }
-        [self.rewardedVideo showAdFromViewController:presentingViewController];
+        [rewardedVideo showAdFromViewController:presentingViewController];
     } else {
         [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_show_failed" des:MATAdTypeDes(parameters.thirdPartyAdPlacementIdentifier, kAdTypeRewardedVideo, @"ad is not ready")];
         [self log:@"Unable to show rewarded ad: not ready"];
@@ -404,27 +639,30 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
             return;
         }
 
-        strongSelf.bannerAdView = [[MATBannerAd alloc] initWithPlacementID:placementIdentifier];
-        if (!strongSelf.bannerAdView) {
+        MATBannerAd *bannerAdView = [[MATBannerAd alloc] initWithPlacementID:placementIdentifier];
+        if (!bannerAdView) {
             NSError *error = [[NSError alloc] initWithDomain:@"MATBannerAd init failed (empty placement?)." code:20106 userInfo:nil];
             [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed" des:MATAdTypeDes(placementIdentifier, kAdTypeBanner, error.domain)];
             MAAdapterError *adapterError = [MaticooMediationAdapter toMaxLoadError:error];
             [delegate didFailToLoadAdViewAdWithError:adapterError];
             return;
         }
+        strongSelf.bannerAdView = bannerAdView;
 
-        strongSelf.bannerAdView.frame = CGRectMake(0, 0, adSize.width, adSize.height);
-        strongSelf.adViewAdapterDelegate = [[ALMaticooMediationAdapterAdViewDelegate alloc] initWithParentAdapter:strongSelf andNotify:delegate];
-        strongSelf.adViewAdapterDelegate.placementId = placementIdentifier;
-        strongSelf.bannerAdView.delegate = strongSelf.adViewAdapterDelegate;
+        bannerAdView.frame = CGRectMake(0, 0, adSize.width, adSize.height);
+        ALMaticooMediationAdapterAdViewDelegate *adapterDelegate =
+            [[ALMaticooMediationAdapterAdViewDelegate alloc] initWithParentAdapter:strongSelf andNotify:delegate];
+        adapterDelegate.placementId = placementIdentifier;
+        strongSelf.adViewAdapterDelegate = adapterDelegate;
+        bannerAdView.delegate = adapterDelegate;
         // can_close_ad 仍从 localExtraParameters 单独读取（已 isKindOfClass 校验类型），不进入 localExtra 字典。
         id canCloseObj = parameters.localExtraParameters[@"can_close_ad"];
         if ([canCloseObj isKindOfClass:[NSNumber class]]) {
-            strongSelf.bannerAdView.canCloseAd = [(NSNumber *)canCloseObj boolValue];
+            bannerAdView.canCloseAd = [(NSNumber *)canCloseObj boolValue];
         } else if ([canCloseObj isKindOfClass:[NSString class]]) {
-            strongSelf.bannerAdView.canCloseAd = [(NSString *)canCloseObj boolValue];
+            bannerAdView.canCloseAd = [(NSString *)canCloseObj boolValue];
         }
-        [strongSelf.bannerAdView loadAd];
+        [bannerAdView loadAdExtraMap:MATLoadExtraMapFromLocalExtraParameters(parameters.localExtraParameters)];
     });
 }
 
@@ -456,12 +694,15 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
         useImageSelfRender = [(NSString *)useImageSelfRenderObj boolValue];
     }
 
+    NSDictionary *extraMap = MATLoadExtraMapFromLocalExtraParameters(parameters.localExtraParameters);
+    NSNumber *isMuted = MATMutedFromLocalExtraParameters(parameters.localExtraParameters);
+
     __weak typeof(self) weakSelf = self;
     dispatch_async(dispatch_get_main_queue(), ^{
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) return;
-        strongSelf.nativeAdInstance = [[MATNativeAd alloc] initWithPlacementID:placementIdentifier];
-        if (!strongSelf.nativeAdInstance) {
+        MATNativeAd *nativeAdInstance = [[MATNativeAd alloc] initWithPlacementID:placementIdentifier];
+        if (!nativeAdInstance) {
             NSError *error = [[NSError alloc] initWithDomain:@"MATNativeAd init failed (empty placement?)." code:20106 userInfo:nil];
             [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_load_failed"
                                                                des:MATAdTypeDes(placementIdentifier, kAdTypeNative, error.domain)];
@@ -469,11 +710,21 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
             [delegate didFailToLoadNativeAdWithError:adapterError];
             return;
         }
-        strongSelf.nativeAdapterDelegate = [[ALMaticooMediationAdapterNativeAdDelegate alloc] initWithParentAdapter:strongSelf andNotify:delegate];
-        strongSelf.nativeAdapterDelegate.placementId = placementIdentifier;
-        strongSelf.nativeAdapterDelegate.useImageSelfRender = useImageSelfRender;
-        strongSelf.nativeAdInstance.delegate = strongSelf.nativeAdapterDelegate;
-        [strongSelf.nativeAdInstance loadAd];
+        strongSelf.nativeAdInstance = nativeAdInstance;
+        ALMaticooMediationAdapterNativeAdDelegate *adapterDelegate =
+            [[ALMaticooMediationAdapterNativeAdDelegate alloc] initWithParentAdapter:strongSelf andNotify:delegate];
+        adapterDelegate.placementId = placementIdentifier;
+        adapterDelegate.useImageSelfRender = useImageSelfRender;
+        strongSelf.nativeAdapterDelegate = adapterDelegate;
+        nativeAdInstance.delegate = adapterDelegate;
+        if (isMuted != nil) {
+            MATVideoOptions *videoOpts = [[MATVideoOptions alloc] init];
+            videoOpts.startMuted = isMuted.boolValue;
+            MATNativeAdOptions *nativeOpts = [[MATNativeAdOptions alloc] init];
+            nativeOpts.videoOptions = videoOpts;
+            [nativeAdInstance setNativeAdOptions:nativeOpts];
+        }
+        [nativeAdInstance loadAdExtraMap:extraMap];
     });
 }
 
@@ -492,27 +743,40 @@ static NSString * const kUseImageSelfRenderKey = @"use_image_self_render";
 }
 
 - (void)dealloc {
-    NSInteger destroyAdType = _lastLoadedMaticooAdType;
-    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_destroy" des:MATAdTypeDes(_placementId, destroyAdType, nil)];
+    MATInterstitialAd *interstitial = nil;
+    MATRewardedVideoAd *rewardedVideo = nil;
+    MATBannerAd *ad = nil;
+    MATNativeAd *nativeAd = nil;
+    NSString *placementId = nil;
+    NSInteger destroyAdType = 0;
+    @synchronized (self) {
+        destroyAdType = _lastLoadedMaticooAdType;
+        placementId = _placementId;
+        interstitial = _interstitial;
+        _interstitial = nil;
+        _interstitialAdapterDelegate = nil;
+        rewardedVideo = _rewardedVideo;
+        _rewardedVideo = nil;
+        _rewardedAdapterDelegate = nil;
+        ad = _bannerAdView;
+        _bannerAdView = nil;
+        _adViewAdapterDelegate = nil;
+        nativeAd = _nativeAdInstance;
+        _nativeAdInstance = nil;
+        _nativeAdapterDelegate = nil;
+        _placementId = nil;
+    }
+    [[MaticooAds shareSDK] adapterEventReportWithEventName:@"adapter_destroy" des:MATAdTypeDes(placementId, destroyAdType, nil)];
 
-    // 直接读写 ivar，dealloc 中避免走 KVO/setter；与 banner 对称地把 interstitial/rewarded 的 delegate 也断开，防止挂起回调命中野指针。
-    _interstitial.delegate = nil;
-    _interstitial = nil;
-    _rewardedVideo.delegate = nil;
-    _rewardedVideo = nil;
-
-    MATBannerAd *ad = _bannerAdView;
-    _bannerAdView.delegate = nil;
-    _bannerAdView = nil;
+    interstitial.delegate = nil;
+    rewardedVideo.delegate = nil;
+    ad.delegate = nil;
+    nativeAd.delegate = nil;
     if (ad) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [ad destroy];
         });
     }
-
-    MATNativeAd *nativeAd = _nativeAdInstance;
-    _nativeAdInstance.delegate = nil;
-    _nativeAdInstance = nil;
     if (nativeAd) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [nativeAd destroy];
